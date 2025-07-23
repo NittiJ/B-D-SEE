@@ -64,3 +64,65 @@ Matched_BDC <- Matched_BDC %>%
     !(Bdc_Program_DESCRIPTION == "BLUE DISTINCTION CENTERS FOR FERTILITY" & ENTITY_TYPE != "1"),
     !(Bdc_Program_DESCRIPTION == "BLUE DISTINCTION CENTERS+ FOR FERTILITY" & ENTITY_TYPE != "1"),
     !(Bdc_Program_DESCRIPTION == "BLUE DISTINCTION CENTERS FOR CANCER CARE" & ENTITY_TYPE != "4"),
+    !(Bdc_Program_DESCRIPTION == "BLUE DISTINCTION CENTERS FOR SUBSTANCE USE TREATMENT AND RECOVERY" & ENTITY_TYPE != "4"),
+    !(Bdc_Program_DESCRIPTION == "BLUE DISTINCTION CENTERS FOR TRANSPLANTS" & ENTITY_TYPE != "4")
+  )
+
+# --- Deduplication Logic (tuned for accuracy) ---
+Matched_BDC <- Matched_BDC %>%
+  distinct(PROV_ADRS_ZIP_CD, Designation_TYPE, Bdc_Program_DESCRIPTION, .keep_all = TRUE)
+
+# --- Format for Export ---
+BDC_Final <- Matched_BDC %>%
+  mutate(
+    PROVIDER_NAME = ORG_NAME,
+    NTWK = "",
+    PROVTYPE = "",
+    TAXONOMY = TXNMY_CD,
+    RowId = row_number(),
+    Latitude = NA_character_,
+    Longitude = NA_character_,
+    GeoInfo = NA_character_,
+    StandardZip = NA_character_,
+    StandardStat = NA_character_,
+    CountySSA = NA_character_
+  ) %>%
+  transmute(
+    NTWK,
+    PROVTYPE,
+    NPI,
+    PROVIDER_NAME,
+    ADDRESS = PROV_ADDR_LINE_1,
+    CITY = PROV_ADRS_CITY,
+    STATE = PROV_ADRS_ST,
+    ZIP_5 = PROV_ADRS_ZIP_CD,
+    TAXONOMY,
+    RowId,
+    Latitude,
+    Longitude,
+    GeoInfo,
+    StandardZip,
+    StandardStat,
+    CountySSA,
+    Bdc_Program_DESCRIPTION,
+    RECOGNTN_ENTITY_CD,
+    Recogntn_Value_CD,
+    Designation_TYPE
+  )
+
+# --- Export to Access ---
+file_copy(blank_shell, access_target, overwrite = TRUE)
+
+conn <- odbcDriverConnect(paste0("Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=", access_target))
+
+chunk_size <- 10000
+n <- nrow(BDC_Final)
+
+for (start in seq(1, n, by = chunk_size)) {
+  end <- min(start + chunk_size - 1, n)
+  chunk <- BDC_Final[start:end, ]
+  sqlSave(conn, chunk, tablename = "NTWK", rownames = FALSE, append = (start != 1), safer = TRUE)
+}
+
+odbcClose(conn)
+message("Export complete: ", access_target)
