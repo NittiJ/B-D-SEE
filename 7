@@ -1,0 +1,118 @@
+# --- Libraries ---
+library(tidyverse)
+library(vroom)
+library(readxl)
+library(RODBC)
+library(fs)
+library(stringr)
+
+# --- Paths ---
+bdc_path <- "C:/BDC/"
+bpd_rdata <- "C:/RCode/20250703_BPDFile.RData"
+recog_map_file <- file.path(bdc_path, "recognition messaging.xlsx")
+access_template <- file.path(bdc_path, "blank_.accdb")
+access_output <- file.path(bdc_path, paste0("BDC_Final_", Sys.Date(), ".accdb"))
+
+# --- Load Final_Keys (from BPD RData) ---
+load(bpd_rdata)
+
+Final_Keys <- Final_Data_Full %>%
+  mutate(across(where(is.character), str_to_upper)) %>%
+  select(
+    BCBSA_MSTR_PROV_ID,
+    PROV_MSTR_LOC_ID,
+    NPI,
+    ORG_NAME,
+    ENTITY_TYPE,
+    PROV_ADDR_LINE_1,
+    PROV_ADRS_CITY,
+    PROV_ADRS_ST,
+    PROV_ADRS_ZIP_CD,
+    TXNMY_CD
+  )
+
+rm(Final_Data_Full)
+
+# --- Load BDC .txt.gz Files ---
+bdc_files <- list.files(bdc_path, pattern = "\\.txt\\.gz$", full.names = TRUE)
+
+BDC_Data <- map_dfr(bdc_files, function(file) {
+  vroom(file, delim = "|", col_types = cols(.default = "c")) %>%
+    mutate(across(where(is.character), str_to_upper))
+})
+
+# --- Load Recognition Mapping ---
+recog_map <- read_excel(recog_map_file) %>%
+  select(Code1, Code2, Title1, Title2) %>%
+  rename(
+    RECOGNTN_ENTITY_CD = Code1,
+    Recogntn_Value_CD = Code2,
+    BDC_Program = Title1,
+    Subprogram = Title2
+  ) %>%
+  drop_na(RECOGNTN_ENTITY_CD, Recogntn_Value_CD, BDC_Program) %>%
+  distinct()
+
+# --- Tag BDC Data with Recognition Program ---
+BDC_Tagged <- BDC_Data %>%
+  left_join(recog_map, by = c("RECOGNTN_ENTITY_CD", "Recogntn_Value_CD")) %>%
+  filter(!is.na(BDC_Program), Designation_TYPE %in% c("BDC", "BDC+"))
+
+# --- Split into Chunks to Avoid Vector Issues ---
+split_bdc <- split(BDC_Tagged, ceiling(seq_along(1:nrow(BDC_Tagged)) / 50000))
+
+Matched_BDC <- map_dfr(split_bdc, function(chunk) {
+  primary <- inner_join(chunk, Final_Keys, by = c("BCBSA_MSTR_PROV_ID", "PROV_MSTR_LOC_ID"))
+  
+  fallback <- anti_join(chunk, primary, by = c("BCBSA_MSTR_PROV_ID", "PROV_MSTR_LOC_ID")) %>%
+    inner_join(Final_Keys, by = c("PROV_NPI" = "NPI"))
+  
+  bind_rows(primary, fallback)
+})
+
+# --- Format Final Export Table for Access ---
+BDC_Final <- Matched_BDC %>%
+  mutate(
+    PROVIDER_NAME = ORG_NAME,
+    NTWK = "",
+    PROVTYPE = "",
+    TAXONOMY = TXNMY_CD,
+    RowId = row_number(),
+    Latitude = NA_character_,
+    Longitude = NA_character_,
+    GeoInfo = NA_character_,
+    StandardZip = NA_character_,
+    StandardStat = NA_character_,
+    CountySSA = NA_character_
+  ) %>%
+  distinct(NPI, PROV_ADRS_ZIP_CD, Designation_TYPE, BDC_Program, .keep_all = TRUE) %>%
+  transmute(
+    NTWK,
+    PROVTYPE,
+    NPI,
+    PROVIDER_NAME,
+    ADDRESS = PROV_ADDR_LINE_1,
+    CITY = PROV_ADRS_CITY,
+    STATE = PROV_ADRS_ST,
+    ZIP_5 = PROV_ADRS_ZIP_CD,
+    TAXONOMY,
+    RowId,
+    Latitude,
+    Longitude,
+    GeoInfo,
+    StandardZip,
+    StandardStat,
+    CountySSA,
+    Bdc_Program_DESCRIPTION = BDC_Program,
+    RECOGNTN_ENTITY_CD,
+    Recogntn_Value_CD,
+    Designation_TYPE
+  )
+
+# --- Export to Access ---
+file.copy(access_template, access_output, overwrite = TRUE)
+conn <- odbcDriverConnect(paste0("Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=", access_output))
+sqlSave(conn, BDC_Final, tablename = "NTWK", rownames = FALSE, safer = TRUE)
+odbcClose(conn)
+
+message("✅ Export complete: ", access_output)
