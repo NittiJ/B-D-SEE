@@ -1,4 +1,3 @@
-# --- Prepare Export Table for Access ---
 BDC_Export <- BDC_Tagged %>%
   filter(!is.na(BDC_Program)) %>%
   distinct(PROV_NPI, Provider_Zip_CODE, Designation_TYPE, BDC_Program) %>%
@@ -11,7 +10,9 @@ BDC_Export <- BDC_Tagged %>%
     GeoInfo = NA_character_,
     StandardZip = NA_character_,
     StandardStat = NA_character_,
-    CountySSA = NA_character_
+    CountySSA = NA_character_,
+    RECOGNTN_ENTITY_CD = if ("RECOGNTN_ENTITY_CD" %in% names(.)) RECOGNTN_ENTITY_CD else NA_character_,
+    Recogntn_Value_CD = if ("Recogntn_Value_CD" %in% names(.)) Recogntn_Value_CD else NA_character_
   ) %>%
   rename(
     NPI = PROV_NPI,
@@ -22,7 +23,7 @@ BDC_Export <- BDC_Tagged %>%
     NTWK,
     PROVTYPE,
     NPI,
-    PROVIDER_NAME = NA_character_,  # Placeholder
+    PROVIDER_NAME = NA_character_,
     ADDRESS = NA_character_,
     CITY = NA_character_,
     STATE = NA_character_,
