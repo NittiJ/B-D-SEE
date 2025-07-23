@@ -1,0 +1,92 @@
+library(tidyverse)
+library(readxl)
+library(RODBC)
+library(fs)
+
+# --- Load Finalized BDC Dataset ---
+BDC_Final <- read_csv("C:/BDC/BDC_Final.csv")
+
+# --- Collapse BDC Program Names ---
+BDC_Final <- BDC_Final %>%
+  mutate(
+    BDC_Program_Clean = case_when(
+      str_detect(Bdc_Program_DESCRIPTION, "BARIATRIC") ~ "BARIATRIC SURGERY",
+      str_detect(Bdc_Program_DESCRIPTION, "CANCER") ~ "CANCER CARE",
+      str_detect(Bdc_Program_DESCRIPTION, "CARDIAC") ~ "CARDIAC CARE",
+      str_detect(Bdc_Program_DESCRIPTION, "CELLULAR IMMUNOTHERAPY") ~ "CELLULAR IMMUNOTHERAPY",
+      str_detect(Bdc_Program_DESCRIPTION, "FERTILITY") ~ "FERTILITY CARE",
+      str_detect(Bdc_Program_DESCRIPTION, "GENE") ~ "GENE THERAPY",
+      str_detect(Bdc_Program_DESCRIPTION, "KNEE AND HIP") ~ "KNEE AND HIP REPLACEMENT",
+      str_detect(Bdc_Program_DESCRIPTION, "MATERNITY") ~ "MATERNITY CARE",
+      str_detect(Bdc_Program_DESCRIPTION, "SPINE") ~ "SPINE SURGERY",
+      str_detect(Bdc_Program_DESCRIPTION, "SUBSTANCE USE") ~ "SUBSTANCE USE TREATMENT AND RECOVERY",
+      str_detect(Bdc_Program_DESCRIPTION, "TRANSPLANTS") ~ "TRANSPLANTS",
+      TRUE ~ Bdc_Program_DESCRIPTION
+    )
+  )
+
+# --- Deduplicate by ZIP + Program + Designation ---
+BDC_Dedup <- BDC_Final %>%
+  filter(!is.na(NPI), !is.na(ZIP_5), !is.na(Designation_TYPE), !is.na(BDC_Program_Clean)) %>%
+  distinct(ZIP_5, Designation_TYPE, BDC_Program_Clean, .keep_all = TRUE)
+
+# --- Optional: Check counts ---
+counts <- BDC_Dedup %>%
+  count(BDC_Program_Clean, Designation_TYPE) %>%
+  arrange(BDC_Program_Clean, Designation_TYPE)
+print(counts)
+
+# --- Format for Access Export ---
+BDC_Export <- BDC_Dedup %>%
+  mutate(
+    NTWK = "",
+    PROVTYPE = "",
+    RowId = row_number(),
+    Latitude = NA_character_,
+    Longitude = NA_character_,
+    GeoInfo = NA_character_,
+    StandardZip = NA_character_,
+    StandardStat = NA_character_,
+    CountySSA = NA_character_,
+    PROVIDER_NAME = if_else(is.na(PROVIDER_NAME), "UNKNOWN", PROVIDER_NAME)
+  ) %>%
+  transmute(
+    NTWK,
+    PROVTYPE,
+    NPI,
+    PROVIDER_NAME,
+    ADDRESS,
+    CITY,
+    STATE,
+    ZIP_5,
+    TAXONOMY,
+    RowId,
+    Latitude,
+    Longitude,
+    GeoInfo,
+    StandardZip,
+    StandardStat,
+    CountySSA,
+    Bdc_Program_DESCRIPTION = BDC_Program_Clean,
+    RECOGNTN_ENTITY_CD,
+    Recogntn_Value_CD,
+    Designation_TYPE
+  )
+
+# --- Export to Access ---
+access_path <- file.path("C:/BDC", paste0("BDC_", Sys.Date(), ".accdb"))
+file_copy("C:/BDC/blank_.accdb", access_path, overwrite = TRUE)
+
+conn <- odbcDriverConnect(paste0("Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=", access_path))
+
+chunk_size <- 10000
+n <- nrow(BDC_Export)
+
+for (start in seq(1, n, by = chunk_size)) {
+  end <- min(start + chunk_size - 1, n)
+  chunk <- BDC_Export[start:end, ]
+  sqlSave(conn, chunk, tablename = "NTWK", rownames = FALSE, append = (start != 1), safer = TRUE)
+}
+
+odbcClose(conn)
+message("✅ Export complete: ", access_path)
