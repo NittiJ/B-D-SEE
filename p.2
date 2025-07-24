@@ -1,0 +1,153 @@
+# Required Libraries
+library(readr)
+library(dplyr)
+library(stringr)
+
+# Set working directories
+setwd("C:/BDC/")
+bpd_data_path <- "C:/RCode/20250703_BPDFile.RData"
+
+# Load BPD data
+load(bpd_data_path)
+
+# Function to read and process txt files
+process_txt_files <- function() {
+    # List all txt files in directory
+    files <- dir(pattern = "*.txt$")
+    
+    # Initialize empty dataframe
+    combined_df <- data.frame()
+    
+    # Process each file
+    for(file in files) {
+        # Read file with pipe delimiter
+        df <- read_delim(file, 
+                        delim = "|",
+                        col_names = TRUE,
+                        na = c("NA", ""))
+        
+        # Add filename column for tracking
+        df$source_file <- file
+        
+        # Combine with existing dataframe
+        combined_df <- bind_rows(combined_df, df)
+    }
+    
+    return(combined_df)
+}
+
+# Process txt files
+bdc_data <- process_txt_files()
+
+# Function to validate BDC counts
+validate_bdc_counts <- function(df) {
+    # Define target numbers
+    bdc_targets <- list(
+        "Bariatric Surgery" = 380,
+        "Cancer Care" = 355,
+        "Cardiac Care" = 147,
+        "Cellular Immunotherapy" = 29,
+        "Fertility Care" = 60,
+        "Knee and Hip Replacement" = 519,
+        "Maternity Care" = 326,
+        "Spine Surgery" = 297,
+        "Substance Use Treatment and Recovery" = 357,
+        "Transplant Centers" = 163
+    )
+    
+    # Count current values
+    actual_counts <- df %>%
+        group_by(Bdc_Program_DESCRIPTION) %>%
+        summarise(count = n())
+    
+    # Create validation report
+    validation_report <- data.frame(
+        Program = names(bdc_targets),
+        Target_Count = unlist(bdc_targets),
+        Actual_Count = actual_counts$count,
+        Difference = unlist(bdc_targets) - actual_counts$count,
+        stringsAsFactors = FALSE
+    )
+    
+    return(validation_report)
+}
+
+# Function to validate BDC+ counts
+validate_bdc_plus_counts <- function(df) {
+    # Define target numbers
+    bdc_plus_targets <- list(
+        "Bariatric Surgery" = 453,
+        "Cardiac Care" = 222,
+        "Fertility Care" = 37,
+        "Knee and Hip Replacement Centers" = 564,
+        "Maternity Care Centers" = 367,
+        "Spine Surgery Centers" = 331,
+        "Transplant Centers" = 45
+    )
+    
+    # Count current values
+    actual_counts <- df %>%
+        filter(str_detect(RECOGNTN_TYPE_CD, "BDC\\+")) %>%
+        group_by(Bdc_Program_DESCRIPTION) %>%
+        summarise(count = n())
+    
+    # Create validation report
+    validation_report <- data.frame(
+        Program = names(bdc_plus_targets),
+        Target_Count = unlist(bdc_plus_targets),
+        Actual_Count = actual_counts$count,
+        Difference = unlist(bdc_plus_targets) - actual_counts$count,
+        stringsAsFactors = FALSE
+    )
+    
+    return(validation_report)
+}
+
+# Validate counts
+bdc_validation <- validate_bdc_counts(bdc_data)
+bdc_plus_validation <- validate_bdc_plus_counts(bdc_data)
+
+# Display validation results
+print("BDC Validation Results:")
+print(bdc_validation)
+print("\nBDC+ Validation Results:")
+print(bdc_plus_validation)
+
+# Prepare final dataset for export
+final_dataset <- bdc_data %>%
+    select(
+        BCBSA_MSTR_PROV_ID,
+        PROV_MSTR_LOC_ID,
+        BCBSA_NTWK_ID,
+        PROV_LCNS_ST,
+        PROV_NPI,
+        PLAN_CD,
+        PROD_ID,
+        VBP_ID,
+        Plan_Name,
+        PROV_LAST_NM,
+        PROV_FRST_NM,
+        PROV_ORG_NM,
+        PROV_DBA_NM,
+        PROV_ADDRS1,
+        PROV_ADRS2,
+        PROV_CITY,
+        Provider_STATE,
+        Provider_Zip_CODE,
+        Bdc_Program_ID,
+        Bdc_Sub_Program_ID,
+        Bdc_Program_DESCRIPTION,
+        Dsgntn_Strt_DT,
+        Term_DATE,
+        Designation_TYPE,
+        Recogntn_Value_CD,
+        RECOGNTN_ENTITY_CD,
+        RECOGNTN_TYPE_CD,
+        BDC_RECOG_REC_IND
+    )
+
+# Export to CSV (Access compatible format)
+write.csv(final_dataset, 
+          "Quest_Analytics_Output.csv",
+          row.names = FALSE,
+          na = "")
